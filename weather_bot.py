@@ -171,8 +171,9 @@ async def fetch_daily_minmax(lat: float, lon: float) -> tuple[float, float] | No
         "forecast_days": 1,
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(url, params=params)
+            log.info("Open-Meteo minmax response: status=%s lat=%s lon=%s", resp.status_code, lat, lon)
             if resp.status_code != 200:
                 log.warning("Open-Meteo minmax error %s: %s", resp.status_code, resp.text)
                 return None
