@@ -496,14 +496,36 @@ def main():
         states={
             WAITING_CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, _receive_city)],
         },
-        fallbacks=[CommandHandler("cancel", _cancel_setcity)],
+        fallbacks=[
+            CommandHandler("cancel", _cancel_setcity),
+            CommandHandler("setcity", cmd_setcity),
+            CommandHandler("weather", cmd_weather),
+            CommandHandler("start", cmd_start),
+            CommandHandler("subscribe", cmd_subscribe),
+            CommandHandler("unsubscribe", cmd_unsubscribe),
+        ],
+        allow_reentry=True,
     ))
     app.add_handler(CommandHandler("weather", cmd_weather))
     app.add_handler(CommandHandler("subscribe", cmd_subscribe))
     app.add_handler(CommandHandler("unsubscribe", cmd_unsubscribe))
 
     log.info("Bot starting...")
-    app.run_polling(drop_pending_updates=True)
+
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if render_url:
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        port = int(os.getenv("PORT", "10000"))
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path="/webhook",
+            webhook_url=f"{render_url}/webhook",
+            drop_pending_updates=True,
+        )
+    else:
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
