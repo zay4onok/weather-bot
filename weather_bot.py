@@ -161,12 +161,29 @@ def get_condition_photo(current: dict) -> str:
     return CONDITION_IMAGES.get(icon_code, CONDITION_IMAGES["03"])
 
 
-def _calc_daily_minmax(current: dict, forecast: dict | None) -> tuple[float, float]:
-    temps = [current["main"]["temp"]]
-    if forecast and "list" in forecast:
-        for item in forecast["list"][:8]:
-            temps.append(item["main"]["temp"])
-    return min(temps), max(temps)
+async def fetch_daily_minmax(lat: float, lon: float) -> tuple[float, float] | None:
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": "temperature_2m_max,temperature_2m_min",
+        "timezone": "auto",
+        "forecast_days": 1,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            daily = data.get("daily", {})
+            t_min = daily.get("temperature_2m_min", [None])[0]
+            t_max = daily.get("temperature_2m_max", [None])[0]
+            if t_min is not None and t_max is not None:
+                return t_min, t_max
+    except Exception:
+        pass
+    return None
 
 
 def _wind_direction(deg: int) -> str:
@@ -174,15 +191,17 @@ def _wind_direction(deg: int) -> str:
     return dirs[round(deg / 45) % 8]
 
 
-def format_weather_data(current: dict, forecast: dict | None) -> str:
+def format_weather_data(current: dict, forecast: dict | None, minmax: tuple[float, float] | None = None) -> str:
     main = current["main"]
     wind = current["wind"]
     desc = current["weather"][0]["description"]
-    t_min, t_max = _calc_daily_minmax(current, forecast)
     lines = [
         f"Місто: {current['name']}",
         f"Температура: {main['temp']}°C (відчувається як {main['feels_like']}°C)",
-        f"Мін/Макс: {t_min:.0f}°C / {t_max:.0f}°C",
+    ]
+    if minmax:
+        lines.append(f"Мін/Макс: {minmax[0]:.0f}°C / {minmax[1]:.0f}°C")
+    lines += [
         f"Вологість: {main['humidity']}%",
         f"Вітер: {wind['speed']} м/с",
         f"Опис: {desc}",
@@ -197,14 +216,13 @@ def format_weather_data(current: dict, forecast: dict | None) -> str:
     return "\n".join(lines)
 
 
-def format_details_card(current: dict, forecast: dict | None) -> str:
+def format_details_card(current: dict, forecast: dict | None, minmax: tuple[float, float] | None = None) -> str:
     main = current["main"]
     wind = current["wind"]
     sys = current.get("sys", {})
     clouds = current.get("clouds", {}).get("all", 0)
     visibility = current.get("visibility", 0)
     tz_offset = current.get("timezone", 0)
-    t_min, t_max = _calc_daily_minmax(current, forecast)
 
     wind_speed = wind.get("speed", 0)
     wind_gust = wind.get("gust", wind_speed)
@@ -225,7 +243,10 @@ def format_details_card(current: dict, forecast: dict | None) -> str:
 
     lines = [
         f"🌡 Відчувається — {main['feels_like']:.1f}°C",
-        f"🔻 Мін / Макс — {t_min:.0f}° / {t_max:.0f}°",
+    ]
+    if minmax:
+        lines.append(f"🔻 Мін / Макс — {minmax[0]:.0f}° / {minmax[1]:.0f}°")
+    lines += [
         f"💧 Вологість — {main['humidity']}%",
         f"🌀 Тиск — {pressure_mmhg} мм рт.ст.",
         f"💨 Вітер — {wind_speed:.1f} м/с, {_wind_direction(wind_deg)}",
@@ -365,9 +386,11 @@ async def cmd_weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     forecast = await fetch_forecast(city)
-    raw = format_weather_data(current, forecast)
+    coord = current.get("coord", {})
+    minmax = await fetch_daily_minmax(coord.get("lat", 0), coord.get("lon", 0))
+    raw = format_weather_data(current, forecast, minmax)
     ai_text = await generate_weather_text(raw)
-    details = format_details_card(current, forecast)
+    details = format_details_card(current, forecast, minmax)
     photo_url = get_condition_photo(current)
 
     full_text = f"{ai_text}\n\n━━━━━━━━━━━━━━━\n\n{details}"
@@ -450,9 +473,11 @@ async def morning_broadcast(app: Application):
                 await app.bot.send_message(chat_id, f"❌ Не вдалося отримати погоду для {city}.")
                 continue
             forecast = await fetch_forecast(city)
-            raw = format_weather_data(current, forecast)
+            coord = current.get("coord", {})
+            minmax = await fetch_daily_minmax(coord.get("lat", 0), coord.get("lon", 0))
+            raw = format_weather_data(current, forecast, minmax)
             ai_text = await generate_weather_text(raw)
-            details = format_details_card(current, forecast)
+            details = format_details_card(current, forecast, minmax)
             photo_url = get_condition_photo(current)
             full_text = f"{ai_text}\n\n━━━━━━━━━━━━━━━\n\n{details}"
             try:
