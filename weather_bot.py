@@ -134,7 +134,7 @@ async def fetch_forecast(city: str) -> dict | None:
         "appid": OWM_API_KEY,
         "units": "metric",
         "lang": "ua",
-        "cnt": 8,
+        "cnt": 40,
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, params=params)
@@ -162,9 +162,17 @@ def get_condition_photo(current: dict) -> str:
 
 
 def _calc_daily_minmax(current: dict, forecast: dict | None) -> tuple[float, float]:
+    today_str = datetime.fromtimestamp(
+        current["dt"] + current.get("timezone", 0)
+    ).strftime("%Y-%m-%d")
     temps = [current["main"]["temp"]]
     if forecast and "list" in forecast:
-        temps.extend(item["main"]["temp"] for item in forecast["list"])
+        for item in forecast["list"]:
+            item_date = datetime.fromtimestamp(
+                item["dt"] + current.get("timezone", 0)
+            ).strftime("%Y-%m-%d")
+            if item_date == today_str:
+                temps.append(item["main"]["temp"])
     return min(temps), max(temps)
 
 
@@ -214,7 +222,9 @@ def format_details_card(current: dict, forecast: dict | None) -> str:
     sunrise = datetime.fromtimestamp(sunrise_ts + tz_offset, ZoneInfo("UTC")).strftime("%H:%M") if sunrise_ts else "—"
     sunset = datetime.fromtimestamp(sunset_ts + tz_offset, ZoneInfo("UTC")).strftime("%H:%M") if sunset_ts else "—"
 
-    vis_km = round(visibility / 1000, 1) if visibility else "—"
+    vis_km = round(visibility / 1000, 1) if visibility is not None else "—"
+
+    pressure_mmhg = round(main["pressure"] * 0.750062, 1)
 
     rain_1h = current.get("rain", {}).get("1h", 0)
     snow_1h = current.get("snow", {}).get("1h", 0)
@@ -224,7 +234,7 @@ def format_details_card(current: dict, forecast: dict | None) -> str:
         f"🌡 Відчувається — {main['feels_like']:.1f}°C",
         f"🔻 Мін / Макс — {t_min:.0f}° / {t_max:.0f}°",
         f"💧 Вологість — {main['humidity']}%",
-        f"🌀 Тиск — {main['pressure']} гПа",
+        f"🌀 Тиск — {pressure_mmhg} мм рт.ст.",
         f"💨 Вітер — {wind_speed:.1f} м/с, {_wind_direction(wind_deg)}",
         f"🌬 Пориви — {wind_gust:.1f} м/с",
         f"☁️ Хмарність — {clouds}%",
