@@ -134,7 +134,7 @@ async def fetch_forecast(city: str) -> dict | None:
         "appid": OWM_API_KEY,
         "units": "metric",
         "lang": "ua",
-        "cnt": 40,
+        "cnt": 8,
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, params=params)
@@ -162,17 +162,10 @@ def get_condition_photo(current: dict) -> str:
 
 
 def _calc_daily_minmax(current: dict, forecast: dict | None) -> tuple[float, float]:
-    today_str = datetime.fromtimestamp(
-        current["dt"] + current.get("timezone", 0)
-    ).strftime("%Y-%m-%d")
     temps = [current["main"]["temp"]]
     if forecast and "list" in forecast:
-        for item in forecast["list"]:
-            item_date = datetime.fromtimestamp(
-                item["dt"] + current.get("timezone", 0)
-            ).strftime("%Y-%m-%d")
-            if item_date == today_str:
-                temps.append(item["main"]["temp"])
+        for item in forecast["list"][:8]:
+            temps.append(item["main"]["temp"])
     return min(temps), max(temps)
 
 
@@ -196,7 +189,7 @@ def format_weather_data(current: dict, forecast: dict | None) -> str:
     ]
     if forecast and "list" in forecast:
         lines.append("\nПрогноз на найближчі 24 години:")
-        for item in forecast["list"]:
+        for item in forecast["list"][:8]:
             dt = datetime.fromtimestamp(item["dt"])
             t = item["main"]["temp"]
             d = item["weather"][0]["description"]
@@ -247,7 +240,7 @@ def format_details_card(current: dict, forecast: dict | None) -> str:
     if forecast and "list" in forecast:
         lines.append("")
         lines.append("⏱ Прогноз на 24 години:")
-        for item in forecast["list"]:
+        for item in forecast["list"][:8]:
             dt = datetime.fromtimestamp(item["dt"])
             t = item["main"]["temp"]
             d = item["weather"][0]["description"]
