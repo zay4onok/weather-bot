@@ -13,8 +13,8 @@ Commands:
 import os
 import logging
 import asyncio
-import aiosqlite
 import httpx
+import asyncpg
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -42,7 +42,9 @@ MORNING_HOUR = int(os.getenv("MORNING_HOUR", "8"))
 MORNING_MINUTE = int(os.getenv("MORNING_MINUTE", "0"))
 DEFAULT_TIMEZONE = os.getenv("DEFAULT_TIMEZONE", "Europe/Kyiv")
 DEFAULT_CITY = os.getenv("DEFAULT_CITY", "Kyiv")
-DB_PATH = os.getenv("DB_PATH", "subscribers.db")
+DATABASE_URL = os.environ["DATABASE_URL"]
+
+_pool: asyncpg.Pool | None = None
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -51,54 +53,57 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Database
+# Database (PostgreSQL via asyncpg)
 # ---------------------------------------------------------------------------
 
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _pool
+
+
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                chat_id    INTEGER PRIMARY KEY,
-                city       TEXT NOT NULL DEFAULT 'Kyiv',
-                subscribed INTEGER NOT NULL DEFAULT 0,
-                tz_offset  INTEGER NOT NULL DEFAULT 7200
-            )
-            """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            chat_id    BIGINT PRIMARY KEY,
+            city       TEXT NOT NULL DEFAULT 'Kyiv',
+            subscribed INTEGER NOT NULL DEFAULT 0,
+            tz_offset  INTEGER NOT NULL DEFAULT 7200
         )
-        await db.commit()
+        """
+    )
 
 
 async def upsert_user(chat_id: int, **fields):
-    async with aiosqlite.connect(DB_PATH) as db:
-        row = await db.execute_fetchall(
-            "SELECT chat_id FROM users WHERE chat_id = ?", (chat_id,)
-        )
-        if row:
-            sets = ", ".join(f"{k} = ?" for k in fields)
-            vals = list(fields.values()) + [chat_id]
-            await db.execute(f"UPDATE users SET {sets} WHERE chat_id = ?", vals)
-        else:
-            cols = ", ".join(["chat_id"] + list(fields.keys()))
-            placeholders = ", ".join(["?"] * (1 + len(fields)))
-            vals = [chat_id] + list(fields.values())
-            await db.execute(f"INSERT INTO users ({cols}) VALUES ({placeholders})", vals)
-        await db.commit()
+    pool = await get_pool()
+    if not fields:
+        return
+    row = await pool.fetchrow("SELECT chat_id FROM users WHERE chat_id = $1", chat_id)
+    if row:
+        sets = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(fields))
+        vals = [chat_id] + list(fields.values())
+        await pool.execute(f"UPDATE users SET {sets} WHERE chat_id = $1", *vals)
+    else:
+        keys = ["chat_id"] + list(fields.keys())
+        placeholders = ", ".join(f"${i+1}" for i in range(len(keys)))
+        cols = ", ".join(keys)
+        vals = [chat_id] + list(fields.values())
+        await pool.execute(f"INSERT INTO users ({cols}) VALUES ({placeholders})", *vals)
 
 
 async def get_user(chat_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE chat_id = ?", (chat_id,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT * FROM users WHERE chat_id = $1", chat_id)
+    return dict(row) if row else None
 
 
 async def get_subscribers() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE subscribed = 1") as cur:
-            return [dict(r) async for r in cur]
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT * FROM users WHERE subscribed = 1")
+    return [dict(r) for r in rows]
 
 # ---------------------------------------------------------------------------
 # Weather (OpenWeatherMap)
