@@ -1,0 +1,5 @@
+.env
+subscribers.db
+__pycache__/
+*.pyc
+bot_avatar.png
