@@ -174,6 +174,7 @@ async def fetch_daily_minmax(lat: float, lon: float) -> tuple[float, float] | No
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, params=params)
             if resp.status_code != 200:
+                log.warning("Open-Meteo minmax error %s: %s", resp.status_code, resp.text)
                 return None
             data = resp.json()
             daily = data.get("daily", {})
@@ -181,8 +182,9 @@ async def fetch_daily_minmax(lat: float, lon: float) -> tuple[float, float] | No
             t_max = daily.get("temperature_2m_max", [None])[0]
             if t_min is not None and t_max is not None:
                 return t_min, t_max
-    except Exception:
-        pass
+            log.warning("Open-Meteo minmax missing data: %s", daily)
+    except Exception as e:
+        log.error("Open-Meteo minmax exception: %s", e)
     return None
 
 
@@ -195,13 +197,15 @@ def format_weather_data(current: dict, forecast: dict | None, minmax: tuple[floa
     main = current["main"]
     wind = current["wind"]
     desc = current["weather"][0]["description"]
+    if not minmax:
+        temps = [main["temp"]]
+        if forecast and "list" in forecast:
+            temps.extend(item["main"]["temp"] for item in forecast["list"][:8])
+        minmax = (min(temps), max(temps))
     lines = [
         f"Місто: {current['name']}",
         f"Температура: {main['temp']}°C (відчувається як {main['feels_like']}°C)",
-    ]
-    if minmax:
-        lines.append(f"Мін/Макс: {minmax[0]:.0f}°C / {minmax[1]:.0f}°C")
-    lines += [
+        f"Мін/Макс: {minmax[0]:.0f}°C / {minmax[1]:.0f}°C",
         f"Вологість: {main['humidity']}%",
         f"Вітер: {wind['speed']} м/с",
         f"Опис: {desc}",
@@ -244,8 +248,12 @@ def format_details_card(current: dict, forecast: dict | None, minmax: tuple[floa
     lines = [
         f"🌡 Відчувається — {main['feels_like']:.1f}°C",
     ]
-    if minmax:
-        lines.append(f"🔻 Мін / Макс — {minmax[0]:.0f}° / {minmax[1]:.0f}°")
+    if not minmax:
+        temps = [main["temp"]]
+        if forecast and "list" in forecast:
+            temps.extend(item["main"]["temp"] for item in forecast["list"][:8])
+        minmax = (min(temps), max(temps))
+    lines.append(f"🔻 Мін / Макс — {minmax[0]:.0f}° / {minmax[1]:.0f}°")
     lines += [
         f"💧 Вологість — {main['humidity']}%",
         f"🌀 Тиск — {pressure_mmhg} мм рт.ст.",
