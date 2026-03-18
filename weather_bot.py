@@ -514,8 +514,6 @@ def main():
 
     render_url = os.getenv("RENDER_EXTERNAL_URL")
     if render_url:
-        import asyncio
-        asyncio.set_event_loop(asyncio.new_event_loop())
         port = int(os.getenv("PORT", "10000"))
         app.run_webhook(
             listen="0.0.0.0",
