@@ -460,6 +460,8 @@ async def cmd_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Scheduler
 # ---------------------------------------------------------------------------
 
+_broadcast_sent_today: dict[int, str] = {}
+
 async def morning_broadcast(app: Application):
     subscribers = await get_subscribers()
     if not subscribers:
@@ -468,13 +470,21 @@ async def morning_broadcast(app: Application):
     now_utc = datetime.now(ZoneInfo("UTC"))
 
     for sub in subscribers:
+        chat_id = sub["chat_id"]
         tz_offset = sub["tz_offset"]
-        local_hour = (now_utc.hour + tz_offset // 3600) % 24
-        local_minute = now_utc.minute + (tz_offset % 3600) // 60
-        if local_hour != MORNING_HOUR or local_minute != MORNING_MINUTE:
+        local_ts = now_utc.timestamp() + tz_offset
+        local_dt = datetime.fromtimestamp(local_ts, ZoneInfo("UTC"))
+        local_hour = local_dt.hour
+        today_str = local_dt.strftime("%Y-%m-%d")
+
+        if local_hour < MORNING_HOUR or local_hour > MORNING_HOUR + 1:
             continue
 
-        chat_id = sub["chat_id"]
+        if _broadcast_sent_today.get(chat_id) == today_str:
+            continue
+
+        _broadcast_sent_today[chat_id] = today_str
+
         city = sub["city"]
         try:
             current = await fetch_weather(city)
