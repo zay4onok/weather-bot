@@ -568,14 +568,42 @@ def main():
 
     render_url = os.getenv("RENDER_EXTERNAL_URL")
     if render_url:
-        port = int(os.getenv("PORT", "10000"))
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="/webhook",
-            webhook_url=f"{render_url}/webhook",
-            drop_pending_updates=True,
-        )
+        import tornado.web
+        import tornado.escape
+        import asyncio
+
+        async def _run_webhook():
+            await app.initialize()
+            await app.start()
+            await app.bot.set_webhook(
+                url=f"{render_url}/webhook",
+                drop_pending_updates=True,
+            )
+
+            bot_app = app
+
+            class HealthHandler(tornado.web.RequestHandler):
+                def get(self):
+                    self.write("OK")
+
+            class WebhookHandler(tornado.web.RequestHandler):
+                async def post(self):
+                    data = tornado.escape.json_decode(self.request.body)
+                    update = Update.de_json(data, bot_app.bot)
+                    await bot_app.process_update(update)
+                    self.write("OK")
+
+            tornado_app = tornado.web.Application([
+                (r"/", HealthHandler),
+                (r"/health", HealthHandler),
+                (r"/webhook", WebhookHandler),
+            ])
+            port = int(os.getenv("PORT", "10000"))
+            tornado_app.listen(port)
+            log.info("Webhook server started on port %s", port)
+            await asyncio.Event().wait()
+
+        asyncio.run(_run_webhook())
     else:
         app.run_polling(drop_pending_updates=True)
 
